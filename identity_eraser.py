@@ -293,7 +293,6 @@ def processDOCX(path):
 			for section in doc_obj.sections:
 				header = section.header
 				docx_replace_regex(header, regex, replace, caseSensitive)
-
 	try:
 		doc = Document(path)
 		for a, b in replacementPairs:
