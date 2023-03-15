@@ -11,23 +11,27 @@ import sys
 import tarfile
 import tempfile
 import zipfile
-# Requires installing pdftk (https://www.pdflabs.com/tools/pdftk-the-pdf-toolkit/)
+# Requires installing pdftk (https://www.pdflabs.com/tools/pdftk-the-pdf-toolkit/) and making it an environmental variable
 
-firstName = input('Enter your first name: ').strip().capitalize()
-lastName = input('Enter your first name: ').strip().capitalize()
-nickname = firstName[0] + lastName
+replacementPairs = []
 firstNameTo = 'John'
 lastNameTo = 'Smith'
 nicknameTo = firstNameTo[0] + lastNameTo
+firstNames = input('Enter some first names (separated by spaces): \t\t\t').strip().split()
+lastNames = input('Enter the corresponding last names (separated by spaces): \t').strip().split()
+assert len(firstNames) == len(lastNames), 'Every first name must have a corresponding last name.'
+for i in range(len(firstNames)):
+	firstName = firstNames[i].strip().capitalize()
+	lastName = lastNames[i].strip().capitalize()
+	nickname = firstName[0] + lastName
+	replacementPairs.append([nickname, nicknameTo])
+	replacementPairs.append([firstName, firstNameTo])
+	replacementPairs.append([lastName, lastNameTo])
 
 # File size threshold check applies to .pdf, .xlsx, and misc files
-FileSizeThresholdMegabytes = 30
-FileSkipOption = 0 # 0 to ask the user each time, 1 to skip, 2 to process
-
-pairs = []
-pairs.append([nickname, nicknameTo])
-pairs.append([firstName, firstNameTo])
-pairs.append([lastName, lastNameTo])
+fileSizeThresholdMegabytes = 20
+fileSkipOption = 0 # 0 to ask the user each time, 1 to skip, 2 to process
+fileSkipPaths = []
 
 print()
 print(f'Hello, {firstName} {lastName}.')
@@ -38,7 +42,7 @@ def replace(string, morePairs=[]):
 		string2 = re.sub(a, b, string2)
 		string2 = re.sub(a.upper(), b.upper(), string2)
 		string2 = re.sub(a.lower(), b.lower(), string2, flags=re.IGNORECASE)
-	for a, b in pairs:
+	for a, b in replacementPairs:
 		string2 = re.sub(a, b, string2)
 		string2 = re.sub(a.upper(), b.upper(), string2)
 		string2 = re.sub(a.lower(), b.lower(), string2, flags=re.IGNORECASE)
@@ -108,25 +112,35 @@ def processPath(path):
 		return True
 	return False
 
+# Handle file sizes that are big, ask the user
 def sizeTooBigCheck(path):
-	global FileSizeThresholdMegabytes, FileSkipOption
+	global fileSizeThresholdMegabytes, fileSkipOption
 	megabytes = os.path.getsize(path) / 1000000
-	if megabytes > FileSizeThresholdMegabytes and FileSkipOption == 0:
-		print()
-		choice = input(f'The file "{path}" is {megabytes} megabytes. This may take a while to process. (s=skip, p=process, s!=skip and don\'t ask again, p!=process and don\'t ask again): ').strip().lower()
-		while choice not in ['s', 'p', 's!', 'p!']:
-			choice = input(f'(s=skip, p=process, s!=skip and don\'t ask again, p!=process and don\'t ask again): ').strip().lower()
-		if choice == 's':
+	if megabytes > fileSizeThresholdMegabytes:
+		if fileSkipOption == 0:
+			print()
+			choice = input(f'The file "{path}" is {megabytes} megabytes. This may take a while to process. (s=skip, p=process, s!=skip and don\'t ask again, p!=process and don\'t ask again): ').strip().lower()
+			while choice not in ['s', 'p', 's!', 'p!']:
+				choice = input(f'(s=skip, p=process, s!=skip and don\'t ask again, p!=process and don\'t ask again): ').strip().lower()
+			if choice == 's':
+				fileSkipPaths.append(path)
+				print(f'Skipping {path}')
+				return False
+			if choice == 's!':
+				fileSkipOption = 1
+				fileSkipPaths.append(path)
+				print(f'Skipping {path}')
+				return False
+			if choice == 'p':
+				return True
+			if choice == 'p!':
+				fileSkipOption = 2
+				return True
+		elif fileSkipOption == 1:
+			fileSkipPaths.append(path)
+			print(f'Skipping {path}')
 			return False
-		if choice == 's!':
-			FileSkipOption = 1
-			return False
-		if choice == 'p':
-			return True
-		if choice == 'p!':
-			FileSkipOption = 2
-			return True
-	elif FileSkipOption == 1: return False
+		else: return True
 	return True
 
 # Rename occurences within a PDF
@@ -139,6 +153,7 @@ def processPDF(path):
 		temp_dir.cleanup()
 
 	def PDF_compress(path):
+		print(f'Compressing {path}...')
 		temp_dir = tempfile.TemporaryDirectory()
 		temp_path = os.path.join(temp_dir.name, os.path.basename(path))
 		pypdftk.compress('"' + path + '"', '"' + temp_path + '"')
@@ -146,29 +161,21 @@ def processPDF(path):
 		temp_dir.cleanup()
 
 	def PDF_replaceText(content):
-		# Created a set of regex/replacements that handle the PDF syntax
-		# e.g. "Test" may be encoded as "(T) 73 (e)-20.42(st)"
-		_regex1 = ''
-		for i in range(len(firstName)):
-			if i > 0: _regex1 += '(\) *[-+]?[0-9\.]+ *\()?'
-			_regex1 += firstName[i]
-		regex1_ = ''
-		for i in range(len(firstNameTo)):
-			if i > 0: regex1_ += f'\\{i}'
-			regex1_ += firstNameTo[i]
-
-		_regex2 = ''
-		for i in range(len(lastName)):
-			if i > 0: _regex2 += '(\) *[-+]?[0-9\.]+ *\()?'
-			_regex2 += lastName[i]
-		regex2_ = ''
-		for i in range(len(lastNameTo)):
-			if i > 0: regex2_ += f'\\{i}'
-			regex2_ += lastNameTo[i]
-
+		# Create a set of regex/replacements that handle the PDF syntax
+		# For example, "Test" may be encoded into "(T) 73 (es)-20.42(t)"
 		morePairs = []
-		morePairs.append([rf'{_regex1}', rf'{regex1_}'])
-		morePairs.append([rf'{_regex2}', rf'{regex2_}'])
+		for i in range(len(replacementPairs)):
+			_regex = ''
+			regex_ = ''
+			a, b = replacementPairs[i]
+			for j in range(len(a)):
+				if j > 0: _regex += '(\) *[-+]?[0-9\.]+ *\()?'
+				_regex += a[j]
+			for j in range(len(b)):
+				if j > 0: regex_ += f'\\{j}'
+				regex_ += b[j]
+			morePairs.append([rf'{_regex}', rf'{regex_}'])
+
 		changed = False
 		lines = content.splitlines()
 		result = ''
@@ -205,25 +212,28 @@ def processPDF(path):
 	try:
 		PDF_uncompress(path)
 	except: pass
-	# Attempt 1
-	changed = False
-	pdf = PdfFileReader(open(path, 'rb'))
-	writer = PdfFileWriter() 
-	for page in pdf.pages:
-		contents = page.getContents().getData()
-		contentsBefore = contents
-		for a, b in pairs:
-			contents = contents.replace(a.encode('utf-8'), b.encode('utf-8'))
-			contents = contents.replace(a.upper().encode('utf-8'), b.upper().encode('utf-8'))
-			contents = contents.replace(a.lower().encode('utf-8'), b.lower().encode('utf-8'))
-		if contents != contentsBefore:
-			changed = True
-			page.getContents().setData(contents)
-		writer.addPage(page)
-	if changed:
-		print(f'Attempt 1: Rewriting "{path}"...')
-		with open(path, 'wb') as file:
-			writer.write(file)
+	# Attempt 1 replacing the encoded data
+	try:
+		changed = False
+		pdf = PdfFileReader(open(path, 'rb'))
+		writer = PdfFileWriter() 
+		for page in pdf.pages:
+			contents = page.getContents().getData()
+			contentsBefore = contents
+			for a, b in replacementPairs:
+				contents = contents.replace(a.encode('utf-8'), b.encode('utf-8'))
+				contents = contents.replace(a.upper().encode('utf-8'), b.upper().encode('utf-8'))
+				contents = contents.replace(a.lower().encode('utf-8'), b.lower().encode('utf-8'))
+			if contents != contentsBefore:
+				changed = True
+				page.getContents().setData(contents)
+			writer.addPage(page)
+		if changed:
+			print(f'Attempt 1: Rewriting "{path}"...')
+			with open(path, 'wb') as file:
+				writer.write(file)
+	except: pass
+	# Attempt 2 using a more complex method
 	try:
 		changed = False
 		pdf = PdfFileReader(path)
@@ -277,7 +287,7 @@ def processDOCX(path):
 
 	try:
 		doc = Document(path)
-		for a, b in pairs:
+		for a, b in replacementPairs:
 			docx_replace_regex(doc, a, b, True)
 			docx_replace_regex(doc, a.upper(), b.upper(), True)
 			docx_replace_regex(doc, a.lower(), b.lower(), False)
@@ -368,11 +378,11 @@ def processDirectory(baseDirectory):
 	for path in files:
 		processPath(path)
 
-	print('[ Editing direct ASCII files ]')
+	print('[ Editing ASCII files ]')
 	files = listFiles(baseDirectory)
 	for path in files:
 		_, extension = os.path.splitext(path)
-		if extension in ['.pdf', '.docx', '.xlsx', '.pptx', '.zip']: continue
+		if extension in ['.pdf', '.docx', '.xlsx', '.pptx', '.zip', '.tar.gz']: continue
 		if sizeTooBigCheck(path):
 			with open(path, 'r', encoding='utf-8', errors='ignore') as file:
 				contents = file.read()
@@ -450,7 +460,7 @@ def processDirectory(baseDirectory):
 		if path.lower().endswith('.tar.xz'):
 			pdfs.append(path)
 	for path in pdfs:
-		print(f'Uncompressing {path}...')
+		print(f'Extracting {path}...')
 		processTAR(path)
 
 if __name__ == '__main__':
@@ -465,4 +475,11 @@ if __name__ == '__main__':
 		baseDirectory = baseDirectoryTo
 
 	processDirectory(baseDirectory)
+
+	print()
+	print('Skipped files that were not processed:')
+	for path in fileSkipPaths:
+		print(f'\t{path}')
+
+	print()
 	print(f'Successfully created "{baseDirectory}".')
