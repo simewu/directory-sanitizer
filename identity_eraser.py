@@ -28,21 +28,39 @@ for i in range(len(firstNames)):
 	replacementPairs.append([firstName, firstNameTo])
 	replacementPairs.append([lastName, lastNameTo])
 
+# Create a set of regex/replacements that handle the PDF syntax
+# For example, "Test" may be encoded into "(T) 73 (es)-20.42(t)"
+addonPDFReplacementPairs = []
+for i in range(len(replacementPairs)):
+	_regex = ''
+	regex_ = ''
+	a, b = replacementPairs[i]
+	numCapturingGroups = 0
+	for j in range(len(a)):
+		if j > 0:
+			_regex += '(\) *[-+]?[0-9\.]* *\()?'
+			numCapturingGroups += 1
+		_regex += a[j]
+	for j in range(len(b)):
+		if j > 0 and j <= numCapturingGroups: regex_ += f'\\{j}'
+		regex_ += b[j]
+	addonPDFReplacementPairs.append([rf'{_regex}', rf'{regex_}'])
+
 # File size threshold check applies to .pdf, .xlsx, and misc files
 fileSizeThresholdMegabytes = 20
 fileSkipOption = 0 # 0 to ask the user each time, 1 to skip, 2 to process
 fileSkipPaths = []
 
 print()
-print(f'Hello, {firstName} {lastName}.')
+print(f'Hello, {firstNames[0]} {lastNames[0]}.')
 
-def replace(string, morePairs=[]):
+def replace(string, addonReplacementPairs=[]):
 	string2 = string
-	for a, b in morePairs:
+	for a, b in replacementPairs:
 		string2 = re.sub(a, b, string2)
 		string2 = re.sub(a.upper(), b.upper(), string2)
 		string2 = re.sub(a.lower(), b.lower(), string2, flags=re.IGNORECASE)
-	for a, b in replacementPairs:
+	for a, b in addonReplacementPairs:
 		string2 = re.sub(a, b, string2)
 		string2 = re.sub(a.upper(), b.upper(), string2)
 		string2 = re.sub(a.lower(), b.lower(), string2, flags=re.IGNORECASE)
@@ -147,35 +165,27 @@ def sizeTooBigCheck(path):
 def processPDF(path):
 	def PDF_uncompress(path):
 		temp_dir = tempfile.TemporaryDirectory()
-		temp_path = os.path.join(temp_dir.name, os.path.basename(path))
-		pypdftk.uncompress('"' + path + '"', '"' + temp_path + '"')
-		shutil.move(temp_path, path)
-		temp_dir.cleanup()
+		try:
+			temp_path = os.path.join(temp_dir.name, os.path.basename(path))
+			pypdftk.uncompress('"' + path + '"', '"' + temp_path + '"')
+			shutil.move(temp_path, path)
+		except:
+			print('Failed to uncompress', path)
+		try: temp_dir.cleanup()
+		except: pass
 
 	def PDF_compress(path):
 		print(f'Compressing {path}...')
 		temp_dir = tempfile.TemporaryDirectory()
-		temp_path = os.path.join(temp_dir.name, os.path.basename(path))
-		pypdftk.compress('"' + path + '"', '"' + temp_path + '"')
-		shutil.move(temp_path, path)
-		temp_dir.cleanup()
+		try:
+			temp_path = os.path.join(temp_dir.name, os.path.basename(path))
+			pypdftk.compress('"' + path + '"', '"' + temp_path + '"')
+			shutil.move(temp_path, path)
+		except: pass
+		try: temp_dir.cleanup()
+		except: pass
 
 	def PDF_replaceText(content):
-		# Create a set of regex/replacements that handle the PDF syntax
-		# For example, "Test" may be encoded into "(T) 73 (es)-20.42(t)"
-		morePairs = []
-		for i in range(len(replacementPairs)):
-			_regex = ''
-			regex_ = ''
-			a, b = replacementPairs[i]
-			for j in range(len(a)):
-				if j > 0: _regex += '(\) *[-+]?[0-9\.]+ *\()?'
-				_regex += a[j]
-			for j in range(len(b)):
-				if j > 0: regex_ += f'\\{j}'
-				regex_ += b[j]
-			morePairs.append([rf'{_regex}', rf'{regex_}'])
-
 		changed = False
 		lines = content.splitlines()
 		result = ''
@@ -186,10 +196,10 @@ def processPDF(path):
 			elif in_text:
 				cmd = line[-2:]
 				if cmd.lower() == 'tj':
-					replaced_line = replace(line, morePairs)
+					replaced_line = replace(line, addonPDFReplacementPairs)
 					if replaced_line != line:
-						#print('From\t', line)
-						#print('To  \t', replaced_line)
+						# print('From\t', line)
+						# print('To  \t', replaced_line)
 						changed = True
 					result += replaced_line + '\n'
 				else:
@@ -234,33 +244,33 @@ def processPDF(path):
 				writer.write(file)
 	except: pass
 	# Attempt 2 using a more complex method
-	try:
-		changed = False
-		pdf = PdfFileReader(path)
-		writer = PdfFileWriter()
-		for page_number in range(0, pdf.getNumPages()):
-			page = pdf.getPage(page_number)
-			contents = page.getContents()
-			if isinstance(contents, DecodedStreamObject) or isinstance(contents, EncodedStreamObject):
-				status = PDF_processData(contents)
-				if status: changed = True
-			elif len(contents) > 0:
-				for obj in contents:
-					if isinstance(obj, DecodedStreamObject) or isinstance(obj, EncodedStreamObject):
-						streamObj = obj.getObject()
-						status = PDF_processData(streamObj)
-						if status: changed = True
-			try:
-				page[NameObject('/Contents')] = contents.decodedSelf
-			except: pass
-			writer.addPage(page)
-		if changed:
-			print(f'Attempt 2: Rewriting "{path}"...')
-			with open(path, 'wb') as file:
-				writer.write(file)
-			PDF_compress(path)
+	#try:
+	changed = False
+	pdf = PdfFileReader(path)
+	writer = PdfFileWriter()
+	for page_number in range(0, pdf.getNumPages()):
+		page = pdf.getPage(page_number)
+		contents = page.getContents()
+		if isinstance(contents, DecodedStreamObject) or isinstance(contents, EncodedStreamObject):
+			status = PDF_processData(contents)
+			if status: changed = True
+		elif len(contents) > 0:
+			for obj in contents:
+				if isinstance(obj, DecodedStreamObject) or isinstance(obj, EncodedStreamObject):
+					streamObj = obj.getObject()
+					status = PDF_processData(streamObj)
+					if status: changed = True
+		try:
+			page[NameObject('/Contents')] = contents.decodedSelf
+		except: pass
+		writer.addPage(page)
+	if changed:
+		print(f'Attempt 2: Rewriting "{path}"...')
+		with open(path, 'wb') as file:
+			writer.write(file)
+		PDF_compress(path)
 
-	except: pass # PDF is corrupt or encrypted, skip
+	#except: pass # PDF is corrupt or encrypted, skip
 
 # Rename occurences within a DOCX
 def processDOCX(path):
@@ -344,7 +354,8 @@ def processZIP(path):
 		except: pass
 		shutil.make_archive(path[:-4], 'zip', temp_dir.name)
 	except: pass
-	temp_dir.cleanup()
+	try: temp_dir.cleanup()
+	except: pass
 
 # Rename occurences within a ZIP (recursively unzips, processes, rezips)
 def processTAR(path):
@@ -359,7 +370,8 @@ def processTAR(path):
 		with tarfile.open(path, 'w:gz') as tar:
 			tar.add(temp_dir.name, arcname=os.path.basename(path))
 	except: pass
-	temp_dir.cleanup()
+	try: temp_dir.cleanup()
+	except: pass
 	
 # Processes a directory, looking for each supported file type
 def processDirectory(baseDirectory):
