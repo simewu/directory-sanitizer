@@ -1,6 +1,6 @@
+from docx import Document
 from PyPDF2 import PdfFileReader, PdfFileWriter
 from PyPDF2.generic import NameObject, DecodedStreamObject, EncodedStreamObject
-import docx
 import openpyxl
 import os
 import pptx
@@ -8,20 +8,21 @@ import pypdftk
 import re
 import shutil
 import sys
+import tarfile
 import tempfile
 import zipfile
 # Requires installing pdftk (https://www.pdflabs.com/tools/pdftk-the-pdf-toolkit/)
 
-firstName = 'Simeon' #input('Enter your first name: ').strip().capitalize()
-lastName = 'Wuthier' #input('Enter your first name: ').strip().capitalize()
+firstName = input('Enter your first name: ').strip().capitalize()
+lastName = input('Enter your first name: ').strip().capitalize()
 nickname = firstName[0] + lastName
 firstNameTo = 'John'
 lastNameTo = 'Smith'
 nicknameTo = firstNameTo[0] + lastNameTo
 
-PDFSizeThresholdMegabytes = 30
-skipPDFIfTooLarge = False
-processPDFRegardlessOfSize = False
+# File size threshold check applies to .pdf, .xlsx, and misc files
+FileSizeThresholdMegabytes = 30
+FileSkipOption = 0 # 0 to ask the user each time, 1 to skip, 2 to process
 
 pairs = []
 pairs.append([nickname, nicknameTo])
@@ -96,7 +97,7 @@ def listFiles(directory = ''):
 			output.append(os.path.join(path, name))
 	return output
 
-# Rename occurances within a path
+# Rename occurences within a path
 def processPath(path):
 	name = os.path.basename(path)
 	pathBefore = path[:-len(name) - 1]
@@ -107,7 +108,28 @@ def processPath(path):
 		return True
 	return False
 
-# Rename occurances within a PDF
+def sizeTooBigCheck(path):
+	global FileSizeThresholdMegabytes, FileSkipOption
+	megabytes = os.path.getsize(path) / 1000000
+	if megabytes > FileSizeThresholdMegabytes and FileSkipOption == 0:
+		print()
+		choice = input(f'The file "{path}" is {megabytes} megabytes. This may take a while to process. (s=skip, p=process, s!=skip and don\'t ask again, p!=process and don\'t ask again): ').strip().lower()
+		while choice not in ['s', 'p', 's!', 'p!']:
+			choice = input(f'(s=skip, p=process, s!=skip and don\'t ask again, p!=process and don\'t ask again): ').strip().lower()
+		if choice == 's':
+			return False
+		if choice == 's!':
+			FileSkipOption = 1
+			return False
+		if choice == 'p':
+			return True
+		if choice == 'p!':
+			FileSkipOption = 2
+			return True
+	elif FileSkipOption == 1: return False
+	return True
+
+# Rename occurences within a PDF
 def processPDF(path):
 	def PDF_uncompress(path):
 		temp_dir = tempfile.TemporaryDirectory()
@@ -124,6 +146,8 @@ def processPDF(path):
 		temp_dir.cleanup()
 
 	def PDF_replaceText(content):
+		# Created a set of regex/replacements that handle the PDF syntax
+		# e.g. "Test" may be encoded as "(T) 73 (e)-20.42(st)"
 		_regex1 = ''
 		for i in range(len(firstName)):
 			if i > 0: _regex1 += '(\) *[-+]?[0-9\.]+ *\()?'
@@ -178,11 +202,30 @@ def processPDF(path):
 			object.setData(encoded_data)
 		return changed
 
-	changed = True
 	try:
 		PDF_uncompress(path)
 	except: pass
+	# Attempt 1
+	changed = False
+	pdf = PdfFileReader(open(path, 'rb'))
+	writer = PdfFileWriter() 
+	for page in pdf.pages:
+		contents = page.getContents().getData()
+		contentsBefore = contents
+		for a, b in pairs:
+			contents = contents.replace(a.encode('utf-8'), b.encode('utf-8'))
+			contents = contents.replace(a.upper().encode('utf-8'), b.upper().encode('utf-8'))
+			contents = contents.replace(a.lower().encode('utf-8'), b.lower().encode('utf-8'))
+		if contents != contentsBefore:
+			changed = True
+			page.getContents().setData(contents)
+		writer.addPage(page)
+	if changed:
+		print(f'Attempt 1: Rewriting "{path}"...')
+		with open(path, 'wb') as file:
+			writer.write(file)
 	try:
+		changed = False
 		pdf = PdfFileReader(path)
 		writer = PdfFileWriter()
 		for page_number in range(0, pdf.getNumPages()):
@@ -202,13 +245,14 @@ def processPDF(path):
 			except: pass
 			writer.addPage(page)
 		if changed:
-			print(f'Rewriting "{path}"...')
+			print(f'Attempt 2: Rewriting "{path}"...')
 			with open(path, 'wb') as file:
 				writer.write(file)
 			PDF_compress(path)
 
 	except: pass # PDF is corrupt or encrypted, skip
 
+# Rename occurences within a DOCX
 def processDOCX(path):
 	def docx_replace_regex(doc_obj, regex, replace, caseSensitive):
 		for p in doc_obj.paragraphs:
@@ -231,17 +275,20 @@ def processDOCX(path):
 				header = section.header
 				docx_replace_regex(header, regex, replace, caseSensitive)
 
-	doc = docx.Document(path)
-	for a, b in pairs:
-		docx_replace_regex(doc, a, b, True)
-		docx_replace_regex(doc, a.upper(), b.upper(), True)
-		docx_replace_regex(doc, a.lower(), b.lower(), False)
-	temp_dir = tempfile.TemporaryDirectory()
-	temp_path = os.path.join(temp_dir.name, os.path.basename(path))
-	doc.save(temp_path)
-	shutil.move(temp_path, path)
-	temp_dir.cleanup()
+	try:
+		doc = Document(path)
+		for a, b in pairs:
+			docx_replace_regex(doc, a, b, True)
+			docx_replace_regex(doc, a.upper(), b.upper(), True)
+			docx_replace_regex(doc, a.lower(), b.lower(), False)
+		temp_dir = tempfile.TemporaryDirectory()
+		temp_path = os.path.join(temp_dir.name, os.path.basename(path))
+		doc.save(temp_path)
+		shutil.move(temp_path, path)
+		temp_dir.cleanup()
+	except: pass
 
+# Rename occurences within a XLSX
 def processXLSX(path):
 	workbook = openpyxl.load_workbook(path)
 	for worksheet in workbook.worksheets:
@@ -249,7 +296,9 @@ def processXLSX(path):
 			for column in range(1,worksheet.max_column + 1):
 				value = worksheet.cell(row,column).value
 				if value != None: 
-					worksheet.cell(row,column).value = replace(value)
+					try:
+						worksheet.cell(row,column).value = replace(value)
+					except: pass
 
 	temp_dir = tempfile.TemporaryDirectory()
 	temp_path = os.path.join(temp_dir.name, os.path.basename(path))
@@ -257,6 +306,7 @@ def processXLSX(path):
 	shutil.move(temp_path, path)
 	temp_dir.cleanup()
 
+# Rename occurences within a PPTX
 def processPPTX(path):
 	ppt = pptx.Presentation(path)
 	for slide in ppt.slides:
@@ -264,26 +314,44 @@ def processPPTX(path):
 			if shape.has_text_frame:
 				for paragraph in shape.text_frame.paragraphs:
 					for run in paragraph.runs:
-						run.text = replace(run.text)
+						try:
+							run.text = replace(run.text)
+						except: pass
 	temp_dir = tempfile.TemporaryDirectory()
 	temp_path = os.path.join(temp_dir.name, os.path.basename(path))
 	ppt.save(temp_path)
 	shutil.move(temp_path, path)
 	temp_dir.cleanup()
 
+# Rename occurences within a ZIP (recursively unzips, processes, rezips)
 def processZIP(path):
 	temp_dir = tempfile.TemporaryDirectory()
-	#temp_path = os.path.join(temp_dir.name, os.path.basename(path))
-	with zipfile.ZipFile(path, 'r') as zip_ref:
-		print('!!!', 'extracting to', temp_dir.name)
-		zip_ref.extractall(temp_dir.name)
-	processDirectory(temp_dir.name)
-	shutil.make_archive(path[:-4], 'zip', temp_dir.name)
+	try:
+		with zipfile.ZipFile(path, 'r') as zip_ref:
+			zip_ref.extractall(temp_dir.name)
+		try:
+			processDirectory(temp_dir.name)
+		except: pass
+		shutil.make_archive(path[:-4], 'zip', temp_dir.name)
+	except: pass
 	temp_dir.cleanup()
-	#sys.exit()
 
+# Rename occurences within a ZIP (recursively unzips, processes, rezips)
+def processTAR(path):
+	temp_dir = tempfile.TemporaryDirectory()
+	try:
+		with tarfile.open(path, 'r') as tar_ref:
+			tar_ref.extractall(temp_dir.name)
+		try:
+			processDirectory(temp_dir.name)
+		except: pass
+		os.remove(path)
+		with tarfile.open(path, 'w:gz') as tar:
+			tar.add(temp_dir.name, arcname=os.path.basename(path))
+	except: pass
+	temp_dir.cleanup()
 	
-
+# Processes a directory, looking for each supported file type
 def processDirectory(baseDirectory):
 	print('[ Renaming directories ]')
 	directories = listSubdirs(baseDirectory)
@@ -305,14 +373,14 @@ def processDirectory(baseDirectory):
 	for path in files:
 		_, extension = os.path.splitext(path)
 		if extension in ['.pdf', '.docx', '.xlsx', '.pptx', '.zip']: continue
-
-		with open(path, 'r', encoding='utf-8', errors='ignore') as file:
-			contents = file.read()
-		contents2 = replace(contents)
-		if contents != contents2:
-			print(f'Editing "{path}"...')
-			with open(path, 'w', encoding='utf-8', errors='ignore') as file:
-				file.write(contents2)
+		if sizeTooBigCheck(path):
+			with open(path, 'r', encoding='utf-8', errors='ignore') as file:
+				contents = file.read()
+			contents2 = replace(contents)
+			if contents != contents2:
+				print(f'Editing "{path}"...')
+				with open(path, 'w', encoding='utf-8', errors='ignore') as file:
+					file.write(contents2)
 
 	print('[ Editing PDF files ]')
 	files = listFiles(baseDirectory)
@@ -321,27 +389,10 @@ def processDirectory(baseDirectory):
 		if path.lower().endswith('.pdf'):
 			pdfs.append(path)
 	for path in pdfs:
-		megabytes = os.path.getsize(path) / 1000000
-		if megabytes > PDFSizeThresholdMegabytes and (not skipPDFIfTooLarge or not processPDFRegardlessOfSize):
-			print()
-			choice = input(f'The PDF File "{path}" is {megabytes} megabytes. This may take a while to process. (s=skip, p=process, s!=skip and don\'t ask again, p!=process and don\'t ask again): ').strip().lower()
-			while choice not in ['s', 'p', 's!', 'p!']:
-				choice = input(f'(s=skip, p=process, s!=skip and don\'t ask again, p!=process and don\'t ask again): ').strip().lower()
-			if choice == 's':
-				continue
-			if choice == 's!':
-				skipPDFIfTooLarge = True
-				continue
-			if choice == 'p':
-				processPDF(path)
-			if choice == 'p!':
-				processPDFRegardlessOfSize = True
-				processPDF(path)
-		elif skipPDFIfTooLarge:
-			continue
-		else:
+		if sizeTooBigCheck(path):
 			processPDF(path)
-
+		else: continue
+	
 	print('[ Editing DOCX files ]')
 	files = listFiles(baseDirectory)
 	pdfs = []
@@ -359,8 +410,10 @@ def processDirectory(baseDirectory):
 		if path.lower().endswith('.xlsx'):
 			pdfs.append(path)
 	for path in pdfs:
-		print(f'Editing {path}...')
-		processXLSX(path)
+		if sizeTooBigCheck(path):
+			print(f'Editing {path}...')
+			processXLSX(path)
+		else: continue
 
 	print('[ Editing PPTX files ]')
 	files = listFiles(baseDirectory)
@@ -379,18 +432,37 @@ def processDirectory(baseDirectory):
 		if path.lower().endswith('.zip'):
 			pdfs.append(path)
 	for path in pdfs:
-		print(f'Editing {path}...')
+		print(f'Unzipping {path}...')
 		processZIP(path)
+
+	print('[ Editing TAR files ]')
+	files = listFiles(baseDirectory)
+	pdfs = []
+	for path in files:
+		if path.lower().endswith('.tar'):
+			pdfs.append(path)
+		if path.lower().endswith('.tar.gz'):
+			pdfs.append(path)
+		if path.lower().endswith('.tar.bz2'):
+			pdfs.append(path)
+		if path.lower().endswith('.tar.Z'):
+			pdfs.append(path)
+		if path.lower().endswith('.tar.xz'):
+			pdfs.append(path)
+	for path in pdfs:
+		print(f'Uncompressing {path}...')
+		processTAR(path)
 
 if __name__ == '__main__':
 	baseDirectory = selectDir(r'.*', False)
-	baseDirectoryTo = baseDirectory + '_RemovedIdentity'
-	if os.path.exists(baseDirectoryTo):
-		print(f'Removing old to "{baseDirectoryTo}"...')
-		shutil.rmtree(baseDirectoryTo)
-	print(f'Copying to "{baseDirectoryTo}"...')
-	shutil.copytree(baseDirectory, baseDirectoryTo)
-	baseDirectory = baseDirectoryTo
+	if not baseDirectory.endswith('_RemovedIdentity'):
+		baseDirectoryTo = baseDirectory + '_RemovedIdentity'
+		if os.path.exists(baseDirectoryTo):
+			print(f'Removing old to "{baseDirectoryTo}"...')
+			shutil.rmtree(baseDirectoryTo)
+		print(f'Copying to "{baseDirectoryTo}"...')
+		shutil.copytree(baseDirectory, baseDirectoryTo)
+		baseDirectory = baseDirectoryTo
 
 	processDirectory(baseDirectory)
 	print(f'Successfully created "{baseDirectory}".')
