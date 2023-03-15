@@ -244,33 +244,32 @@ def processPDF(path):
 				writer.write(file)
 	except: pass
 	# Attempt 2 using a more complex method
-	#try:
-	changed = False
-	pdf = PdfFileReader(path)
-	writer = PdfFileWriter()
-	for page_number in range(0, pdf.getNumPages()):
-		page = pdf.getPage(page_number)
-		contents = page.getContents()
-		if isinstance(contents, DecodedStreamObject) or isinstance(contents, EncodedStreamObject):
-			status = PDF_processData(contents)
-			if status: changed = True
-		elif len(contents) > 0:
-			for obj in contents:
-				if isinstance(obj, DecodedStreamObject) or isinstance(obj, EncodedStreamObject):
-					streamObj = obj.getObject()
-					status = PDF_processData(streamObj)
-					if status: changed = True
-		try:
-			page[NameObject('/Contents')] = contents.decodedSelf
-		except: pass
-		writer.addPage(page)
-	if changed:
-		print(f'Attempt 2: Rewriting "{path}"...')
-		with open(path, 'wb') as file:
-			writer.write(file)
-		PDF_compress(path)
-
-	#except: pass # PDF is corrupt or encrypted, skip
+	try:
+		changed = False
+		pdf = PdfFileReader(path)
+		writer = PdfFileWriter()
+		for page_number in range(0, pdf.getNumPages()):
+			page = pdf.getPage(page_number)
+			contents = page.getContents()
+			if isinstance(contents, DecodedStreamObject) or isinstance(contents, EncodedStreamObject):
+				status = PDF_processData(contents)
+				if status: changed = True
+			elif len(contents) > 0:
+				for obj in contents:
+					if isinstance(obj, DecodedStreamObject) or isinstance(obj, EncodedStreamObject):
+						streamObj = obj.getObject()
+						status = PDF_processData(streamObj)
+						if status: changed = True
+			try:
+				page[NameObject('/Contents')] = contents.decodedSelf
+			except: pass
+			writer.addPage(page)
+		if changed:
+			print(f'Attempt 2: Rewriting "{path}"...')
+			with open(path, 'wb') as file:
+				writer.write(file)
+			PDF_compress(path)
+	except: pass # PDF is corrupt or encrypted, skip
 
 # Rename occurences within a DOCX
 def processDOCX(path):
