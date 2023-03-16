@@ -1,4 +1,4 @@
-# Directory Identity Wiper
+# Directory Identity Sanitizer
 
 This Python script takes a set of names, and a directory, then recursively walks through the directory to remove every instance of the name, replacing it with John Smith.
 
