@@ -14,3 +14,8 @@ This Python script takes a set of names, and a directory, then recursively walks
 1. For Windows users, double click on identity_eraser.bat, or type `python3 directory_identity_eraser.py` into the terminal.
 1. Enter a set of first names separated by spaces, then last names separated by spaces.
 1. Select a directory. The program will clone and append "_SanitizedIdentity" to the end of the directory name, if it is not there already, then proceed to process each file.
+    - For PDF, XLSX, and ASCII files exceeding 20 megabytes, the program will ask the user to choose what to do.
+      - Type `s` to skip the file.
+      - Type `s!` to skip the file and all subsequent files.
+      - Type `p` to process the file (may take a while).
+      - Type `p!` to process the file and all subsequent files.
