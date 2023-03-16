@@ -1,4 +1,4 @@
-# Directory Identity Eraser
+# Directory Identity Sanitizer
 # This Python3 file will ask for a name and a directory from the user, then walk through every file within the directory.
 # For every file and directory path containing the name, the program will rename the file/directory accordingly.
 # For plain ASCII files (e.g. TXT files, HTML files, etc), the program will replace all occurances of the name within the file with John Smith.
@@ -489,8 +489,8 @@ def processDirectory(baseDirectory):
 
 if __name__ == '__main__':
 	baseDirectory = selectDir(r'.*', False)
-	if not baseDirectory.endswith('_RemovedIdentity'):
-		baseDirectoryTo = baseDirectory + '_RemovedIdentity'
+	if not baseDirectory.endswith('_SanitizedIdentity'):
+		baseDirectoryTo = baseDirectory + '_SanitizedIdentity'
 		if os.path.exists(baseDirectoryTo):
 			print(f'Removing old to "{baseDirectoryTo}"...')
 			shutil.rmtree(baseDirectoryTo)
