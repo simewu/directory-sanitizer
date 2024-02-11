@@ -8,7 +8,7 @@ This Python script takes a set of names, and a directory, then recursively walks
 - Replaces the contents of DOCX word documents using the python-docx library.
 - Replaces the contents of XLSX excel documents using the openpyxl library.
 - Replaces the contents of PPTX excel documents using the python-pptx library.
-- Extracts ZIP and TAR-based archives into a temporary directory, recusrively iterates through the contents, then re-archives the directory and replaces the original file.
+- Extracts ZIP and TAR-based archives into a temporary directory, recursively iterates through the contents, then re-archives the directory and replaces the original files.
 
 ## Usage
 1. For Windows users, double click on identity_eraser.bat, or type `python3 directory_identity_eraser.py` into the terminal.
